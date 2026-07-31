@@ -1,166 +1,66 @@
-from jinja2.nodes import Test
-from constants.bitbucket_route_constants.bitbucket_pr_routes import BitBucketPRRoutes
-from clients.repositories.bitbucket_integration.bitbucket_pr_client import BitBucketPRClient
-from models.schemas.bitbucket_schemas.bitbucket_create_pr import CreatePullRequestRequest, Branch, PullRequestEndpoint, Reviewer 
-from models.schemas.bitbucket_response_schemas.bitbucket_create_pr import PullRequestResponse
-from models.schemas.bitbucket_response_schemas.bitbucket_approve_pr import PullRequestApprovalResponse
-
-from clients.repositories.bitbucket_integration.bitbucket_repository_client import BitBucketRepositoryClient
-from models.schemas.bitbucket_schemas.bitbucket_create_repo import CreateRepositoryRequest, Project, MainBranch
-from constants.bitbucket_route_constants.bitbucket_repository_routes import BitBucketRepoRoutes
-from models.schemas.bitbucket_response_schemas.bitbucket_create_repository import RepositoryResponse
-from models.schemas.bitbucket_schemas.bitbucket_update_repo import UpdateRepositoryRequest, MainBranch, Project
-from clients.repositories.github_integration.github_branch_client import GitHubBranchClient
-from models.schemas.github_schemas.branch_schema import Branch
-from clients.repositories.github_integration.github_commit_client import GitHubCommitClient
-from constants.github_route_constants.github_commit_route import CommitRoutes
-from models.schemas.github_schemas.commit_variables import CommitIntent, FileAddition
-from clients.repositories.github_integration.github_branch_client import GitHubBranchClient
-
-from config.config import settings
-#from repositories.github_integration import GitHubCommitClient, GitHubBranchClient
-import asyncio as core_asyncio
+import json
 import structlog
 
+from config.paths import REPO_DIR
+
 logger = structlog.get_logger()
-branch_client = GitHubBranchClient()
 
-async def main():
+# Anchored to the repo rather than the CWD so sibling apps append to the same
+# log instead of scattering `logs/agent.log` next to whatever directory they
+# happened to be started from.
+AGENT_LOG_PATH = REPO_DIR / "logs" / "agent.log"
 
-    WORKSPACE = "ingen-test-workspace"
-    REPO_SLUG = "newer-repo-slug"
+class StreamingAgentLogger:
+    def __init__(self):
+        self.token_buffer = []
+        self.tool_buffer = []
+# Testing the commit to github
+    def __call__(self, **kwargs):
+        """Shared event processor for both async iterators and callback handlers"""
+        messages = []
+        event = kwargs.get("event", {})
 
-    request = Branch(
-    owner="Max-Sami07",
-    repo_name="test-repo-ingen",
-    branch_name="test_graphQL"
-    )
+        if event.get("contentBlockStart", False):
 
-    file_commit = CommitRoutes.from_file(repo_path="logger.py", local_path="C:\\Users\\User\\Projects\\InGen\\in_gen_backend\\test_endpoint.py")
-    data = CommitIntent(
-        branch_name="test_graphQL",
-        commit_message="Testing Commiting to ghub",
-        repository_owner="Max-Sami07",
-        repository_name="test-repo-ingen",
-        additions=[file_commit],
-        deletions=None
-    )
+            messages.append(f"\n{"".join(self.token_buffer)}")
+            self.token_buffer.clear()
 
-    client = GitHubCommitClient(branch_client=branch_client)
-    route = CommitRoutes()
+            start = event["contentBlockStart"]["start"]
+            if "toolUse" in start:
+                messages.append(f"\nTool use: {start["toolUse"]["name"]}")
 
-    try:
-        # url = route.base_url_repo(workspace=WORKSPACE, repo_slug=REPO_SLUG)
-        # logger.info("Starting create_commit endpoint...")
-        # logger.info(f"URL: {url}")
-        result = await client.create_commit(commit_schema=data)
-        logger.info(f"Result: {result}")
-        # logger.info(f"raw response: {result.json()}")
-        #result.raise_for_status()
-        # commit_data = RepositoryResponse(**result.json())
-        # logger.info(f"Response strctured: {commit_data}")
-        logger.info(f"Commit successful!")
-    except Exception as e:
-        logger.error(f"Commit failed: {e}")
-        raise e
+        if event.get("contentBlockStop", False):
+            raw = ""
+            try:
+                raw = "".join(self.tool_buffer)
+                parameters = json.loads(raw)
+            except Exception as e:
+                logger.error(e)
+                parameters = raw
+            messages.append("\n")
+            messages.append(parameters)
+            self.tool_buffer.clear()
 
-if __name__ == "__main__":
-    core_asyncio.run(main())
+        if event.get("contentBlockDelta", False):
+            delta = event["contentBlockDelta"]["delta"]
+            if delta and "text" in delta:
+                self.token_buffer.append(delta.get("text"))
+            elif delta and "toolUse" in delta:
+                if "input" in delta.get("toolUse", {}):
+                    self.tool_buffer.append(delta["toolUse"]["input"])
 
-# async def main():
-    
-#     # 1. Instantiate the client (creates the object)
-#     repo_client = GitHubCommitClient()
-#     # with open("test.py", "rb") as file:
-#     #     encoded_string = base64.b64encode(file.read()).decode('utf-8')
-#     # # 2. Setup your data
-#     # data = CommitSchema(
-#     #     owner="Max-Sami07",
-#     #     repo="test-repo-ingen",
-#     #     message="Test commit from Ingen Project",
-#     #     path="test.py",
-#     #     content=encoded_string,
-#     #     committer=Committer(
-#     #         email="msami@retrorabbit.co.za",
-#     #         name="Max-Sami07"
-#     #     )
-#     # )
+        if messages:
+            self.append_to_file(messages)
 
-#     data = CommitVariables(
-#         owner="Max-Sami07",
-#         repo="test-repo-ingen",
-#         branch="main",
-#         commit_message="GraphQL commit test",
-#         deletions=None,
-#         files= [
-#             FileCommit(
-#                 path="logger.py",
-#                 contents=CommitRoutes.from_file(repo_path=)
-#         )],
-#         path=None,
-#     )
-
-#     # 
-#     payload = GraphQLCommitPayload(
-#     variables=Variables(
-#         input=Input(
-#             branch=Branch(
-#                 repository_name_with_owner=f"{data.owner}/{data.repo}",
-#                 branch_name=data.branch,
-#             ),
-#             message=Message(headline=data.commit_message),
-#             expected_head=ExpectedHead(oid=head_sha),
-#             file_changes=FileChanges(
-#                 additions=[
-#                     FileAddition(path=f.path, contents=f.contents)
-#                     for f in data.files
-#                 ]
-#             ),
-#         )
-#     )
-# )
-#     # 
+    def append_to_file(self, messages: list[str]):
+        AGENT_LOG_PATH.parent.mkdir(parents=True, exist_ok=True)
+        with open(AGENT_LOG_PATH, mode="a", encoding="utf-8") as file:
+            try:
+                for message in messages:
+                    file.write(f"{message}")
+            except Exception as e:
+                logger.error(e)
+                file.write(str(e))
 
 
-#     try:
-#         # 3. AWAIT the method call on the INSTANCE
-#         print(f"encoded_string: {data.files[0].contents}")
-#         print("Starting Commit Process")
-#         #print(f"endpoint: {CommitRoutes.create_repo(owner=data, repo=data.repo, path=data.path)}")
-#         # test = await repo_client.put(endpoint=CommitRoutes.create_update_repo(owner=data.owner, repo=data.repo, path=data.path), json=data.model_dump())
-#         print(f"GraphQL endpoint: {settings.api.github_graph_ql_endpoint}")
-#         test = await repo_client.create_commit(commit_schema=data)
-#         print(f"test response: {test.text}")
-#         print("Success! Response:")
-#     except Exception as e:
-#         print(f"Failed to create commit: {e}")
-
-# def build_graphql_payload(commit_schema: CommitVariables, expected_head_sha: str) -> dict:
-#     mutation = CommitRoutes.GQL_QUERY
-    
-#     payload = GraphQLCommitPayload(
-#     variables=Variables(
-#         input=Input(
-#             branch=Branch(
-#                 repository_name_with_owner=f"{commit_schema.owner}/{commit_schema.repo}",
-#                 branch_name=commit_schema.branch,
-#             ),
-#             message=Message(headline=commit_schema.commit_message),
-#             expected_head=ExpectedHead(oid=head_sha),
-#             file_changes=FileChanges(
-#                 additions=[
-#                     FileAddition(path=f.path, contents=f.contents)
-#                     for f in commit_schema.files
-#                 ]
-#             ),
-#         )
-#     )
-# )
-
-#     return {
-#         "query": mutation,
-#         "variables": payload
-#     }
-
-# if __name__ == "__main__":
-#     core_asyncio.run(main())
+streaming_agent_logger = StreamingAgentLogger()
