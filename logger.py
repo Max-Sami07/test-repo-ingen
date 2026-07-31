@@ -14,7 +14,7 @@ class StreamingAgentLogger:
     def __init__(self):
         self.token_buffer = []
         self.tool_buffer = []
-# Testing the commit to github
+# Testing
     def __call__(self, **kwargs):
         """Shared event processor for both async iterators and callback handlers"""
         messages = []
